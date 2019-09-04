@@ -1,0 +1,63 @@
+---
+title: "Toward large scale stochastic refraction tomography: a comparison of three evolutionary algorithms"
+author: "Keurfon LUU"
+knit: "bookdown::render_book"
+site: bookdown::bookdown_site
+output:
+  thesisdown::thesis_pdf: default
+  # bookdown::gitbook:
+  #   css: style.css
+  #   highlight: pygments
+    # mathjax: local
+    # self_contained: no
+abstract: >
+  `r if(knitr:::is_latex_output()) paste(readLines("papers/gp2018a_abstract.Rmd", encoding = "UTF-8"), collapse = ' ')`
+keywords: >
+  `r if(knitr:::is_latex_output()) paste(readLines("papers/gp2018a_keywords.Rmd", encoding = "UTF-8"), collapse = ' ')`
+authorship: >
+  `r if(knitr:::is_latex_output()) paste(readLines("papers/gp2018a_authorship.Rmd", encoding = "UTF-8"), collapse = ' ')`
+bibliography: bib/library.bib
+csl: bib/oxford-author-date.csl
+lot: false
+lof: false
+link-citations: true
+space_between_paragraphs: false
+---
+
+```{r include_packages, include = FALSE}
+if (!require(devtools)) {
+  install.packages("devtools", repos = "http://cran.rstudio.com")
+}
+
+if (!require(thesisdown)) {
+  devtools::install_github("ismayc/thesisdown")
+}
+
+if (!require(reticulate)) {
+  install.packages("reticulate")
+}
+
+if (!require(data.table)) {
+  install.packages("data.table", repos = "http://cran.rstudio.com")
+}
+
+if (!require(xtable)) {
+  install.packages("xtable")
+}
+
+# if (!require(kable)) {
+#   install.packages("kable")
+# }
+
+if (!require(kableExtra)) {
+  install.packages("kableExtra")
+}
+
+knitr::opts_chunk$set(echo = FALSE,
+                      warning = FALSE,
+                      message = FALSE,
+                      fig.align = "center",
+                      results = "asis",
+                      cache = FALSE,
+                      out.width = '\\textwidth')
+```

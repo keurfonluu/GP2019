@@ -1,4 +1,4 @@
-# Toward large scale stochastic refraction tomography: a comparison of three evolutionary algorithms
+# Toward large scale stochastic refraction tomography : a comparison of three evolutionary algorithms
 [![DOI](https://img.shields.io/badge/DOI-10.1111/1365--2478.12866-blue.svg)](https://doi.org/10.1111/1365-2478.12866)
 
 ## Abstract

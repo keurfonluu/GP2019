@@ -1,0 +1,541 @@
+## Introduction {#ch4-introduction}
+
+Building a macro-velocity model is a key step in seismic imaging. Generally speaking, first arrival traveltime tomography based on direct, diffracted or refracted waves is applied to invert for a velocity model that explains the observed data. Such obtained velocity models are often used as background models in migration or as initial models in Full Waveform Inversion (FWI) whose results depend on the quality of the velocity models. First arrival traveltime tomography is a typical non-linear and ill-posed problem encountered by the geophysical community. Acquisition aperture is often limited and the sources and receivers are located only at the surface which causes the resolution of velocity to decrease and error to increase with depth. To assess properly resolution and errors, a reliable estimation of uncertainties is mandatory.
+
+In spite of its non-linearity, many refraction tomography methods apply a derivative-based optimization method to solve the linearized problem iteratively (@White1989, @Zelt1998, @Zhang1998). The linearization makes the implicit assumption of a unique solution obtained by a regularization procedure, and only allows to obtain a local solution dependent on the initial solution (@Menke2012). The level of damping required by the regularization procedure has to be determined prior to the inversion by the user and strongly influences the inversion result. From a computational point of view, derivative-based methods are very attractive since the gradient can be efficiently calculated using the adjoint-state method (e.g. @Taillandier2009, @Noble2010) making them suitable for large scale optimization problems (i.e. 3D velocity models containing millions of parameters whatever the type of parametrization).
+
+Besides, derivative-based approaches are under gaussian hypothesis and require additional computation to quantify uncertainties by assessing the quality of the inverted solution using bootstrapping or evaluation of the sensitivity kernel for example. On the one hand, derivative-free methods based on Markov Chain Monte Carlo (MCMC) that sample the velocity model parameter space provide reliable estimates of uncertainty. These methods can be applied to non-smooth and non-convex functions and produce results independent of the initial model. Although these algorithms are sequential, each Markov chain can be run in parallel either independently or interactively (@Sambridge2014, @Bottero2016). Other recent studies have proposed methods to parallelize MCMC based algorithms (@Neiswanger2013, @Goudie2017). However, some approaches such as interactive MCMC are not straightforward to implement. On the other hand, evolutionary algorithms (EA) are global optimization methods inspired by the natural evolution of species that are intrinsically and straightforwardly parallel as they operate on a population of models. Each model is represented by an independent individual within a population that can be evaluated in parallel.
+
+Global optimization methods have been successfully applied to various inversion problems in geophysics such as earthquake location (@Sambridge1993, @Billings1994, @Ruzek2001), surface wave dispersion curve inversion (@Socco2008, @Song2012, @Wilken2012), history matching (@Mohamed2010a, @Mohamed2012), or traveltime tomography (@Bodin2009, @Tronicke2012, @Bottero2016, @Belhadj2018a). However, few studies have applied this kind of methods to solve a typical refraction tomography problem due to the higher dimensionality and multi-modality of the problem. Indeed, the *curse of dimensionality* that inherently affects all global optimization algorithms can exponentially increase the number of local minima with the number of model parameters which makes them not suitable for large scale optimization. @Boschetti1996 applied a genetic algorithm on a synthetic refraction tomography problem and tackled the *curse of dimensionality* by adopting a multi-scale strategy (@Bunks1995) that iteratively increases the dimensionality of the search space. @Improta2002 applied an hybrid scheme based on a Monte Carlo approach and the simplex optimization technique to derive an initial background velocity model from first arrival traveltime data. @Rumpf2015 used a particle swarm optimizer to solve the tomographic problem and quantify uncertainties using a 1D layer-based model parametrization. More recently, @Ryberg2018 directly applied a bayesian MCMC formalism to invert refraction data and parametrized the velocity model using Voronoi tesselation and triangulated meshes. To our knowledge, no study has been published on the application of EA to the seismic tomography problem for a large number of model parameters.
+
+In this work, we propose to study the feasibility of a medium to large scale (300 parameters) stochastic refraction tomography by comparing three EA, namely the Differential Evolution (DE, @Storn1997), the Competitive Particle Swarm Optimization (CPSO, @Luu2018a) and the Covariance Matrix Adaptation - Evolution Strategy (CMA-ES, @Hansen2003). These three EA are becoming more and more popular in the geophysical community because their implementations are straightforward, they require less tuning, they are by nature parallel algorithms and their convergence rates is much higher compared to classical global optimization methods (@Angeline1998, @Mohamed2010). These algorithms were originally designed for optimization and are now used to quantify uncertainties (@FernandezMartinez2012, @Tronicke2012, @Rumpf2015). @Luu2018a showed on a simple real data example that CPSO does sample properly the velocity model parameter space to provide reliable estimates of uncertainty, results were similar to those obtained by MCMC at a much lower computational cost. It is worth mentioning that EA like any global optimizers do not guarantee to find the global minimum. Nevertheless, they are global in the sense that they are less dependent on their initial conditions. The main objective of this work is to evaluate the performances and robustness of the three EA to solve a medium to large scale highly non-linear tomography problem. The ability of DE and CMA-ES to quantify uncertainties are compared to CPSO. First, we briefly describe the three algorithms before showing the practical implementations for refraction tomography and applying them to reconstruct a smoothed version of the Marmousi velocity model. We choose a 2D cardinal B-splines parametrization to obtain a smooth and realistic velocity model. Finally, we perform a scalability analysis to assess the parallel performance of each algorithm on our problem.
+
+
+## Theory and method {#ch4-theory-and-method}
+
+Many geophysical problems are underdetermined optimization/sampling problems that can be solved using either local or global algorithms (@Tarantola1982). An optimization problem consists in minimizing the objective function $E$ under the constraint $\mathbf{m}_{\min} \le \mathbf{m} \le \mathbf{m}_{\max}$ (feasible space). In other words, we want to find the optimal model $\mathbf{m}_{\mathrm{opt}}$ so that
+
+\begin{equation}
+	\mathbf{m}_{\mathrm{opt}} = \arg\!\min \left( E \left( \mathbf{m} \right) \right), \quad \mathbf{m}_{\min} \le \mathbf{m} \le \mathbf{m}_{\max}.
+	(\#eq:ch4-minimization)
+\end{equation}
+
+\noindent In geophysical inverse problems, the objective function measures the difference between the experimental data and the synthetic data calculated by a theoretical (often numerical) model, and is hence usually referred to as the misfit function. Let us define the discrete data vector $\mathbf{d}^{obs}$. For a model $\mathbf{m}$, the misfit can be measured by the well-known root-mean-square (RMS) error written
+
+\begin{equation}
+  E \left( \mathbf{m} \right) = \left[ \frac{1}{N} \left( \mathbf{d}^{obs} - g \left( \mathbf{m} \right) \right)^{\top} \mathbf{C_D}^{-1} \left( \mathbf{d}^{obs} - g \left( \mathbf{m} \right) \right) \right]^{\frac{1}{2}}
+  (\#eq:ch4-rms)
+\end{equation}
+
+\noindent with $N$ the number of data points, $\mathbf{C_D}$ the data covariance matrix that accounts for the noise present in the observed data, and $g \left( \mathbf{m} \right)$ the data calculated by the forward operator $g$ -- often non-linear -- on the model $\mathbf{m}$. The non-linearity can be addressed by global optimization methods that explore the model parameter space. In this paper, we focus on evolutionary algorithms where the misfit function value of each model within the population can be independently evaluated.
+
+
+### Evolutionary algorithms {#ch4-evolutionary-algorithms}
+
+Evolutionary algorithms (EA) are population-based stochastic optimization methods that present mechanisms inspired by the natural evolution of species such as mutation, recombination and selection. A candidate model to the optimization problem is represented by an individual with its misfit determining the quality of the model. EA are intrinsically parallel as each individual is independent and their misfit values can be evaluated concurrently. This property allows EA to benefit from all the computational resources available.
+
+In this section, we describe the three evolutionary algorithms that will be used to solve the refraction tomography problem, namely the Differential Evolution, the Competitive Particle Swarm Optimization and the Covariance Matrix Adaptation - Evolution Strategy. As EA are nature-inspired optimization algorithms, they may present some discrepancies in the vocabulary. For the sake of consistency, we speak in terms of models, population, parameters and iterations to respectively designate candidate solutions, ensemble of candidate solutions, variables of solution vectors and successive solution updates. Besides, unless explicitly stated, the population size is denoted by $n$, the dimensionality by $d$, the iteration number by superscript $k$ and the subscript $i$ refers to the individual $i$ of the population. The symbols used throughout this paper are listed in Table \@ref(tab:ch4-list-symbols).
+
+
+#### Differential Evolution {#ch4-de}
+
+Differential Evolution (DE) is a genetic programming algorithm introduced by @Storn1997. It has shown excellent performances in many real-world problems including geophysical problems (@Storn2017). DE starts by generating a population of models uniformly distributed in the model parameter space. For each target model $\mathbf{m}_{i}^{k}$, DE generates a mutant model $\mathbf{v}_{i}^{k}$ by adding the weighted difference between two population models to a third model such that
+
+\begin{equation}
+  \mathbf{v}_{i}^{k} = \mathbf{m}_{r_1}^{k-1} + F \left( \mathbf{m}_{r_2}^{k-1} - \mathbf{m}_{r_3}^{k-1} \right)
+  (\#eq:ch4-de-mutation)
+\end{equation}
+
+\noindent where $r_1, r_2, r_3 \in \left\{ 1, 2, ..., n \right\}$ are three distinct random indices different from $i$, $F \in \left[ 0, 2 \right]$ is the mutation factor that weighs the differential variation $\left( \mathbf{m}_{r_2}^{k-1} - \mathbf{m}_{r_3}^{k-1} \right)$. This operation is called mutation. In order to increase diversity within the population of mutant models, crossover has been introduced to produce a trial model $\mathbf{u}_{i}^{k}$ following
+
+\begin{align}
+  u_{ji}^{k} = 
+  \begin{cases}
+    v_{ji}^{k} &\text{if  $r_j \le CR$ or $j = R$} \\
+    m_{ji}^{k-1} &\text{otherwise}
+  \end{cases}
+  (\#eq:ch4-de-crossover)
+\end{align}
+
+\noindent with $j$ being the parameter index, $r_j \sim \mathcal{U} \left( 0, 1 \right)$ a uniform random number, $R \in \left\{ 1, 2, ..., d \right\}$ a random parameter index and $CR \in \left[ 0, 1 \right]$ the crossover rate that controls the likelihood to receive a parameter from a mutant model with the condition $j = R$ ensuring that it gets at least one mutated parameter. Finally, selection applies the greedy criterion to determine which models to preserve based on their misfit function values. If the trial model $\mathbf{u}_{i}^{k}$ yields a lower misfit, it replaces the target model $\mathbf{m}_{i}^{k}$, otherwise, its previous value is retained. The variant presented in this section that will be used in this paper is known as DE/*rand*/*1*/*bin* as only one differential weight is added to a randomly chosen model, and crossover is due to independent binomial experiments (@Storn1997). The mutation and crossover mechanisms are illustrated in Figure \@ref(fig:ch4-de-principle).
+
+(ref:ch4-de-principle-cap) (Left) Mutation in DE on a 2D misfit function represented by the contour lines. $\mathbf{v}_{i}^{k}$ is generated by adding the weighted differential variation $\left( \mathbf{m}_{r_2}^{k-1} - \mathbf{m}_{r_3}^{k-1} \right)$ to the individual $\mathbf{m}_{r_1}^{k-1}$, with $\mathbf{m}_{r_1}^{k-1}$, $\mathbf{m}_{r_2}^{k-1}$ and $\mathbf{m}_{r_3}^{k-1}$ three random individuals chosen in the population. (Right) Crossover in DE for $d = 8$ parameters. For each parameter, the trial vector $\mathbf{u}_i^k$ receives a parameter from either the current or mutant vectors accordingly to a binomial distribution with probability defined by $CR$.
+
+```{r ch4-de-principle, fig.cap = '(ref:ch4-de-principle-cap)'}
+knitr::include_graphics("figures/chapter4/de_principle.png")
+```
+
+
+#### Competitive Particle Swarm Optimization {#ch4-cpso}
+
+Particle Swarm Optimization (PSO) has been introduced by @Kennedy1995 to study the social behavior of fishes and birds. It belongs to the EA subclass of Swarm intelligence where collective knowledge is channeled within the population. In PSO, the first step is to generate a population randomly distributed in the model parameter space. Each model is represented by a particle that interacts with its neighborhood to find the global minimum of the misfit function. 
+
+At iteration $k$, a particle $i$ is defined by a model vector $\mathbf{m}_{i}^{k}$ and a velocity vector $\mathbf{v}_{i}^{k}$ and is adjusted according to its own personal best model and the global best model of the whole population. The velocity vector controls how a model moves in the model parameter space and is initialized to zero (@Engelbrecht2012). The velocity and the position of each model are updated following
+
+\begin{equation}
+	\mathbf{v}_{i}^{k} = \omega \mathbf{v}_{i}^{k-1} + \phi_{p} \mathbf{r}_{p}^{k} \left( \mathbf{m}_{p,i} - \mathbf{m}_{i}^{k-1} \right) + \phi_{g} \mathbf{r}_{g}^{k} \left( \mathbf{m}_{g} - \mathbf{m}_{i}^{k-1} \right)
+	(\#eq:ch4-pso-velocity)
+\end{equation}
+
+\begin{equation}
+	\mathbf{m}_{i}^{k} = \mathbf{m}_{i}^{k-1} + \mathbf{v}_{i}^{k}
+	(\#eq:ch4-pso-position)
+\end{equation}
+
+\noindent where $\mathbf{m}_{p,i}$ and $\mathbf{m}_{g}$ are respectively the personal best model of particle $i$ and the global best model of the population, $\mathbf{r}_{p}^{k}$ and $\mathbf{r}_{g}^{k}$ are uniform random number vectors drawn at iteration $k$, $\omega$ is an inertia weight, $\phi_{p}$ and $\phi_{g}$ are two acceleration parameters that respectively control the cognition and social interactions of the particles. Principle of PSO is illustrated in Figure \@ref(fig:ch4-pso-principle).
+
+(ref:ch4-pso-principle-cap) Principle of PSO on a 2D misfit function represented by the contour lines. Particle velocity $\mathbf{v}_i^k$ is constructed by adding three weighted terms: the previous velocity $\mathbf{v}_i^{k-1}$ that acts as an inertial term, the cognition term $\left( \mathbf{m}_{p,i} - \mathbf{m}_{i}^{k-1} \right)$ that accounts for the particle's personal knowledge, and the sociability term $\left( \mathbf{m}_{g} - \mathbf{m}_{i}^{k-1} \right)$ that involves the knowledge of the entire swarm.
+
+```{r ch4-pso-principle, out.width = '50%', fig.cap = '(ref:ch4-pso-principle-cap)'}
+knitr::include_graphics("figures/chapter4/pso.png")
+```
+
+The classical implementation of PSO suffers from premature convergence and stagnation as it can be trapped in a local minimum, particularly when the evaluated function has a complex landscape. Therefore, @Luu2018a proposed a Competitive PSO (CPSO) to help the models to escape from a local minimum whenever the population stagnates. The idea is to improve the diversity of the population by renewing part of the population and keeping the "best" models only. "Worst" models are reset, allowing a better exploration of the model space. A reset is called a "competition" and is triggered whenever premature convergence is detected. The population is considered to be stagnating when its maximum radius $\delta^k$ is lower than a threshold $\varepsilon$ following
+
+\begin{equation}
+	\delta^{k} = \max_{1 \le i \le n} \left( \frac{\left\lVert\mathbf{m}_{i}^{k} - \mathbf{m}_{g}\right\rVert}{\left\lVert\mathbf{m}_{\max} - \mathbf{m}_{\min}\right\rVert} \right) < \varepsilon = \frac{\log \left( 1 + 0.003 n \right)}{\max \left( 0.2, \log \left( 0.01 k_{\max} \right) \right)}
+	(\#eq:ch4-swarm-maximum-radius)
+\end{equation}
+
+\noindent where $\left\lVert\cdot\right\rVert$ denotes the Euclidean norm, and $k_{\max}$ is the maximum number of iterations. Besides, a competitivity parameter $\gamma \in \left[ 0, 2 \right]$ is introduced to control the proportion of models to reset following
+
+\begin{equation}
+  \sigma \left( k \right) = \frac{1}{1 + e^{\frac{1}{0.09} \left( \frac{k}{k_{\max}} - \gamma + 0.5 \right)}}.
+  (\#eq:ch4-cpso-sigmoid)
+\end{equation}
+
+\noindent The logistic function defined in Equation \@ref(eq:ch4-cpso-sigmoid) has been tweaked so that the population is competitive at early iterations and many models are reset; at later iterations, the population stagnates in the last minimum found to refine the solution. CPSO has demonstrated better convergence rates compared to classical implementation of PSO, and is more robust to the choice of its control parameters.
+
+
+#### Covariance Matrix Adaptation - Evolution Strategy {#ch4-cmaes}
+
+The Covariance Matrix Adaptation - Evolution Strategy (CMA-ES) (@Hansen2003) is considered as the state-of-the-art method for stochastic numerical optimization and is derived from the natural gradient. It is a second-order method similar to Quasi-Newton methods yet randomized, that has been designed to approximate the contour lines of the objective function by adapting the covariance matrix of a multivariate gaussian distribution to the objective function topography. It belongs to the class of Evolution strategies that has been introduced in the early seventies (@Rechenberg1973). In CMA-ES, a population consists of $\lambda$ models called offspring sampled from a multivariate gaussian distribution :
+
+\begin{equation}
+  \forall i \in \left[ 1, \lambda \right], \mathbf{m}_{i}^{k} \sim \bar{\mathbf{m}}^{k-1} + \sigma^{k-1} \mathcal{N} \left( \mathbf{0}, \mathbf{C}^{k-1} \right)
+  (\#eq:ch4-cmaes-sampling)
+\end{equation}
+
+\noindent where $\mathcal{N}\left( \mathbf{0}, \mathbf{C}^{k-1} \right)$ denotes a multivariate gaussian distribution with zero mean and covariance matrix $\mathbf{C}^{k-1}$, $\bar{\mathbf{m}}^{k-1}$ is the mean vector of the distribution and $\sigma^{k-1}$ is the step size. Then, $\mu$ models are selected as parents among the model offspring that yield the lowest misfit function values, and recombined to form the mean of the distribution for the next iteration, following
+
+\begin{equation}
+  \bar{\mathbf{m}}^{k} = \bar{\mathbf{m}}^{k-1} + \sum_{i = 1}^{\mu} \omega_{i} \left( \mathbf{m}_{i\colon\lambda}^{k} - \bar{\mathbf{m}}^{k-1} \right), \quad \text{with} \quad \sum_{i = 1}^{\mu} \omega_{i} = 1, \quad \omega_{1} \ge \omega_{2} \ge ... \ge \omega_{\mu} > 0
+  (\#eq:ch4-cmaes-recombination)
+\end{equation}
+
+\noindent where $i\colon\lambda$ denotes the index of the $i^{th}$ best model offspring. The CMA-ES then adapts the covariance matrix of the distribution by performing two critical updates, namely the rank-one and rank-$\mu$ updates, and reads
+
+\begin{align}
+  \mathbf{C}^{k} = \left( 1 - c_1 - c_\mu \sum \omega_i \right) \mathbf{C}^{k-1} &+ c_1 \underbrace{\mathbf{p}_c^k {\mathbf{p}_c^k}^\top}_{\text{rank-one update}} \\ &+ c_\mu \underbrace{\sum_{i = 1}^{\lambda} \frac{\omega_i}{\sigma^{k-1}} \left( \mathbf{m}_{i\colon\lambda}^k - \bar{\mathbf{m}}^{k-1} \right) \left( \mathbf{m}_{i\colon\lambda}^k - \bar{\mathbf{m}}^{k-1} \right)^\top}_{\text{rank-$\mu$ update}}
+  (\#eq:ch4-cmaes-covariance-adaptation)
+\end{align}
+
+with $c_1 \le 1$ and $c_\mu \le 1$ being the learning rates. The first term accounts for the information from the previous covariance matrices whose contributions decay exponentially with time. The rank-one update reinforces the likelihood of steps in the vicinity direction of the evolution path $\mathbf{p}_c^k$ (sum of consecutive steps of the mean in the previous iterations) while the rank-$\mu$ update exploits information from the distribution of the current population.
+
+The adaptation of the covariance matrix does not control the overall scale of the distribution, only the directions and lengths of its principal axis. Thus, the step size is also independently adapted by comparing the length of a second evolution path $\mathbf{p}_\sigma^k$ (sum of consecutive step lengths) to its expected length upon random selection, which is written
+
+\begin{equation}
+  \sigma^k = \sigma^{k-1} \left( \frac{c_\sigma}{d_\sigma} \left( \frac{\left\lVert \mathbf{p}_\sigma^k \right\rVert}{E \left[ \left\lVert \mathcal{N} \left( \mathbf{0}, \mathbf{I} \right) \right\rVert \right]} - 1 \right) \right)
+  (\#eq:ch4-cmaes-sigma-adaptation)
+\end{equation}
+
+\noindent where $c_\sigma < 1$ is the time horizon of the evolution path and $d_\sigma \approx 1$ is a damping parameter. Therefore, the step size is decreased whenever it is too short, and increased whenever it is too long. The principle of CMA-ES is illustrated in Figure \@ref(fig:ch4-cmaes).
+
+(ref:ch4-cmaes-cap) Principle of CMA-ES on a 2D misfit function represented by the contour lines. The population should move toward the upper right corner. (Left) Sample of $\lambda = 20$ offspring distributed accordingly to $\mathcal{N} \left( \bar{\mathbf{m}}^{k-1}, \mathbf{C}^{k-1} \right)$. (Middle) $\mu = 10$ best individuals selected to update the mean and covariance matrix. (Right) Mutation distribution for the next generation. Adapted from @Hansen2011.
+
+```{r ch4-cmaes, fig.cap = '(ref:ch4-cmaes-cap)'}
+knitr::include_graphics("figures/chapter4/cmaes.png")
+```
+
+
+### Control parameter values {#ch4-control-parameter-values}
+
+EA are designed to be easy to use with few control parameters that are robust and easy to choose. In addition to the population size and the maximum number of iterations, DE is controlled by two main user parameters, namely the mutation factor $F$ and the crossover rate $CR$. CPSO is controlled by four parameters, namely the inertia weight $\omega$, the cognition and sociability parameters $\phi_p$ and $\phi_g$, and the competitivity parameter $\gamma$. From a user point of view, CMA-ES requires only two parameters to be set by the user, namely the initial mean and the step size, the remaining parameters introduced are usually fixed independently of the problem. Empirical studies have shown that performances of EA are sensitive to the input control parameters, especially DE and CPSO. However, these studies have provided some insights on the initialization of these parameters (@Iwan2012, @VanDenBergh2006, @Eberhart2000).
+
+In practice, we followed these guidelines that turn out to be very robust and summarize in Table \@ref(tab:ch4-parameter-values) the parameter values for each EA. Note that this table only shows one parameter for CMA-ES (i.e. the initial step size) as the choice of the initial mean is explained in Section \@ref(ch4-initial-models). In general, an algorithm is stopped when the misfit value threshold or the maximum number of iterations specified by the user are reached. In the following, we choose the latter stopping criterion to allow the algorithms to sample around the final solution. 
+
+(ref:ch4-parameter-values-cap) Default control parameter values.
+
+```{r ch4-parameter-values, eval = TRUE}
+library(kableExtra)
+
+parameters = c("Mutation factor",
+               "Crossover rate",
+               "Inertia weight",
+               "Cognition",
+               "Sociability",
+               "Competitivity",
+               "Initial step size")
+
+symbols = c("$F$",
+            "$CR$",
+            "$\\omega$",
+            "$\\phi_p$",
+            "$\\phi_g$",
+            "$\\gamma$",
+            "$\\sigma$")
+
+values = c("0.9",
+           "0.5",
+           "0.7298",
+           "1.49618",
+           "1.49618",
+           "1",
+           "$\\frac{\\mathbf{m}_{\\max}-\\mathbf{m}_{\\min}}{3}$")
+
+dt = data.frame(" " = parameters,
+                Symbol = symbols,
+                Value = values,
+                check.names = FALSE)
+
+knitr::kable(dt,
+             caption = '(ref:ch4-parameter-values-cap)',
+             align = c("l", "c", "c"),
+             linesep = "",
+             format = format,
+             booktabs = TRUE,
+             escape = FALSE) %>%
+kable_styling(full_width = FALSE) %>%
+group_rows("DE", 1, 2) %>%
+group_rows("CPSO", 3, 6) %>%
+group_rows("CMA-ES", 7, 7)
+```
+
+
+## Numerical example {#ch4-numerical-example}
+
+### Synthetic data and parametrization {#ch4-synthetic-data}
+
+In this paper, we invert for the Marmousi velocity model using the three EA presented in Section \@ref(ch4-evolutionary-algorithms). The Marmousi velocity model was designed to be geologically realistic yet complex with strong vertical and lateral velocity variations (@Versteeg1994a). Therefore, reconstructing this velocity model by tomographic methods is challenging.
+
+We parametrize the velocity model using a cubic cardinal B-spline surface (order 4). Such a representation reduces the number of unknowns and provides by nature a smooth velocity model which thus avoids introducing an additional regularization term. A B-spline surface is a parametric surface defined by $n_z \times n_x$ control points $\mathbf{P} \in \mathbb{R}^{n_z \times n_x}$, its orders $k_z$ and $k_x$ respectively corresponding to functions of degree $k_z-1$ and $k_x-1$. Any B-spline surface of order $\left( k_z, k_x \right)$ can be expressed as a linear combination of B-splines of order $\left( k_z, k_x \right)$ following
+
+\begin{equation}
+	S \left( u, v \right)  = \sum_{i = 1}^{n_z} \sum_{j = 1}^{n_x} P_{ij} B_i^{k_z} \left( u \right) B_j^{k_x} \left( v \right), \quad u, v \in \left[ 0, 1 \right]
+	(\#eq:ch4-bsplines)
+\end{equation}
+
+\noindent where the B-spline basis functions $B_i^{k_z}$ and $B_j^{k_x}$ can be calculated with de Boor's recursion (@DeBoor1972). In our refraction tomography problem, $\mathbf{P}$ is a set of control points that contains the velocity information of the model. The velocity model is finally interpolated on a finer 120 by 400 cartesian grid (i.e. grid spacing of 25 meters) and traveltimes are calculated using a 2D Eikonal solver (@Noble2014) that generates traveltime grids for each shot location. Such a grid spacing offers a good trade-off between computation time and traveltime accuracy for this data set.
+
+It should be mentioned that because of the B-spline parametrization, we will only be able to retrieve the long wavelengths of the velocity model. Therefore, we generate a low-frequency target velocity model by smoothing the original model using a gaussian filter with respectively a 200 and 75 meters standard deviation in X and Z directions. Synthetic traveltimes are generated considering a stationary acquisition geometry that consists of two hundred shots and four hundred receivers spaced every 50 and 25 meters, respectively. The maximum offset reaches 10 km just for the end shots, so we expect to retrieve the velocities fairly accurately down to a depth of approximately 1 km that corresponds to 1/10 of the maximum offset. Beyond this depth, accuracy of the retrieved velocity model will decrease more and more with depth.
+
+Figure \@ref(fig:ch4-marmousi) shows the low-frequency target velocity model used to generate the traveltime data (top) and the ray density map for this acquisition geometry (bottom). The ray density map exhibits some area that are not illuminated (e.g. between 4 and 7 km at 2 km depth, and the lower corners of the velociy model). High uncertainties should thus be expected in these areas. The data being noise-free, we set the data covariance matrix in Equation \@ref(eq:ch4-rms) to $\mathbf{C_D} = \mathbf{I}$ with $\mathbf{I}$ the identity matrix.
+
+(ref:ch4-marmousi-cap) Marmousi velocity model. (Top) Low-frequency target velocity model used to generate the traveltime data. (Bottom) Ray density map.
+
+```{r ch4-marmousi, fig.cap = '(ref:ch4-marmousi-cap)'}
+knitr::include_graphics("figures/chapter4/marmousi_true.png")
+```
+
+
+### Weighted mean model and standard deviation {#ch4-mean-model}
+
+Because refraction tomography is an ill-posed and highly multi-modal problem, the solution is not unique and the global minimum is not guaranteed to be found by an evolutionary optimizer, especially in high dimensions. Typically, tomographic solutions are appraised using several statistical measures, in particular the mean and the standard deviation (@Bodin2009, @Bodin2012a). The mean velocity model is usually considered as a reference model while the standard deviation is interpreted as an error map, under the assumption that each model parameter is normally distributed. In this study, the weighted mean velocity model obtained by averaging all the models sampled is also considered alternatively to the best velocity model. In addition, the associated errors (i.e. standard deviation) are estimated to assess the ability of an EA to quantify uncertainties.
+
+A single run of EA does not provide a proper sampling of the model parameter space since they are designed to rapidly locate and exploit a single minimum. @Sen1996 (in Section Multiple MAP estimation) suggests to perform several independent runs of a global optimizer with different starting solutions to sample different parts of the model parameter space. Assuming that the posterior density distribution $P \left( \mathbf{m} \ \middle| \  \mathbf{d}^{obs} \right)$ can be approximated using all the models sampled by several runs, the mean model is calculated as the weighted sum of all the models sampled and is written as
+
+\begin{equation}
+	\hat{\mathbf{v}} = \frac{\sum_i P \left( \mathbf{m_i} \ \middle| \  \mathbf{d}^{obs} \right) \mathbf{v_i}}{\sum_{i} P \left( \mathbf{m_i} \ \middle| \  \mathbf{d}^{obs} \right)}
+	(\#eq:ch4-mean-model)
+\end{equation}
+
+\noindent where $\mathbf{v_i}$ is the 2D cartesian velocity model interpolated from the B-spline grid defined by the model parameters $\mathbf{m_{i}}$. More specifically, the contribution of each model is weighted by its posterior probability. Because bad fitting models have very low probability, their contributions to the mean are nil. Likewise, the unbiased standard deviation reads
+
+\begin{equation}
+  \boldsymbol{\sigma} = \sqrt{\frac{N}{N-1} \frac{\sum_i P \left( \mathbf{m_i} \ \middle| \  \mathbf{d}^{obs} \right) \left( \mathbf{v_i} - \hat{\mathbf{v}} \right)^2}{\sum_{i} P \left( \mathbf{m_i} \ \middle| \  \mathbf{d}^{obs} \right)} }
+  (\#eq:ch4-std-model)
+\end{equation}
+
+\noindent with $N$ the total number of models.
+
+From a formal point of view, the  estimation of uncertainties should be obtained by computing the density plots or ideally the quantiles based on the marginals. Even if EA are very efficient in terms of CPU resources, we still end up with a very large number of models (i.e. the number of independent runs times the number of iterations times the population size),
+and these quantities can become prohibitive to calculate. The standard deviation is a pragmatic approach to quantify uncertainties. It is also in agreement with the mean.
+
+
+### Initial models {#ch4-initial-models}
+
+From a general point of view, global optimization methods are ideally insensitive to the initial models under the condition that the algorithm is run for a very large number of iterations (e.g. @Bodin2009 required 1 million iterations for a velocity model parametrized with a small number of unknowns). Whenever using EA, initial models are usually randomly generated in the model parameter space, which ideally should not influence the output of the optimization. However, refraction tomography is a highly non-linear and multi-modal optimization problem. While DE, CPSO and CMA-ES
+have been designed to deal with premature convergence, random velocity models may contain strong local velocity heterogeneities that can mislead the optimization process and require more iterations to ensure convergence. Therefore, one can help the search by introducing more realistic initial models (yet randomized).
+
+In order to investigate the influence of the initial models on the quality of the inverted models, we run 20 inversions of 5000 iterations using CPSO with a population size of 26 individuals and different types of model initializations, namely fully random, homogeneous and vertically increasing gradient velocity models. The velocity model is parametrized by a cardinal B-spline grid of 8 by 13 ($d = 104$) i.e. 8 and 13 spline nodes are regularly spaced every 429 m in the Z direction and every 833 m in the X direction, respectively. Such parametrization offers a good trade-off between the vertical resolution and the dimensionality of the problem. For each type of model initialization, the velocities of the B-spline nodes are randomly initialized according to a uniform distribution which is more explicitly described in Table \@ref(tab:ch4-model-initialization).
+
+(ref:ch4-model-initialization-cap) Initialization of the velocities of the B-spline nodes for each type of model initialization. The initialization procedures are independently applied to every model in the population.
+
+```{r ch4-model-initialization, eval = TRUE}
+library(kableExtra)
+
+methods = c("Random",
+            "Homogeneous",
+            "Gradient")
+
+descriptions = c("Velocities are randomly sampled from $\\mathcal{U} \\left( 1500, 5000 \\right)$.",
+                 "Velocities are all equal to a single random value sampled from $\\mathcal{U} \\left( 1500, 5000 \\right)$.",
+                 "Velocity at the surface is sampled from $\\mathcal{U} \\left( 1500, 3250 \\right)$. Velocity at the bottom is sampled from $\\mathcal{U} \\left( 3250, 5000 \\right)$. Velocities for intermediate nodes are linearly interpolated between surface and bottom velocity nodes.")
+
+dt = data.frame(Method = methods,
+                Description = descriptions,
+                check.names = FALSE)
+
+knitr::kable(dt,
+             caption = '(ref:ch4-model-initialization-cap)',
+             align = c("c", "l"),
+             linesep = "",
+             format = format,
+             booktabs = TRUE,
+             escape = FALSE) %>%
+kable_styling(full_width = FALSE) %>%
+column_spec(column = 2, width = "12cm")
+```
+
+We recall that the B-spline grid is interpolated on a 120 by 400 cartesian grid for the computation of traveltimes. The influence of the population size with dimensionality will be further studied in the next section. Figure \@ref(fig:ch4-initial-rms) shows the average evolution of the RMS over the 20 runs for the different types of initializations (left) and example of 100 random vertically increasing gradient 1D profiles (right). Initializing the models with increasing gradient velocity models allows the optimizers to start the search in a lower RMS space than the two other types of initializations. The model that yields the lowest RMS will serve as the global best model for DE and CPSO, while it will be used as the initial mean of the gaussian distribution for CMA-ES.
+
+(ref:ch4-initial-rms-cap) (Left) Average RMS over 20 runs as a function of iteration number. When using random vertically increasing gradient initialization, the optimizers converge faster toward low RMS velocity models. (Right) Example of 100 random vertically increasing gradient velocity models, the color scale indicating their RMS values. For CMA-ES, the model that yields the lowest RMS is chosen as the initial mean vector (red).
+
+```{r ch4-initial-rms, fig.cap = '(ref:ch4-initial-rms-cap)'}
+knitr::include_graphics("figures/chapter4/initial_rms.png")
+```
+
+Figure \@ref(fig:ch4-initial-models) displays the mean velocity model obtained for the three different types of initialization. While the shallow structure of the weighted mean velocity models fit the target velocity model, the optimizers are not able to retrieve the strong refractor at 2.5 km depth when using fully random and homogeneous initial models. On the other hand, the mean velocity model for gradient initialization fits well the long wavelengths of the target velocity model at all depths.
+
+(ref:ch4-initial-models-cap) 1D profiles (top) and 2D models (bottom) for different initializations. (Left) Fully random. (Middle) Homogeneous. (Right) Vertically increasing gradient. The mean velocity model (blue) fits the long wavelengths of the target velocity model (black) at all depths for gradient initialization. The results have been obtained using CPSO.
+
+```{r ch4-initial-models, fig.cap = '(ref:ch4-initial-models-cap)'}
+knitr::include_graphics("figures/chapter4/initial_models_full.png")
+```
+
+Note that the results presented were obtained using CPSO only. However, comparable results and conclusions can be obtained with DE or CMA-ES as the initial population starts in a better search space which allows the algorithms to converge faster.
+
+
+### Results {#ch4-results}
+
+In the previous section, we investigated the influence of the initialization by inverting for a 8 by 13 B-spline grid ($d = 104$) and obtained a very low resolution mean velocity model. In this section, we invert for a velocity model of higher resolution parametrized by a 15 by 20 B-spline grid ($d = 300$) i.e. 15 and 20 spline nodes are regularly spaced every 214 m in the Z direction and every 526 m in the X direction, respectively. We investigate the influences of the population size $n$ (26, 52 and 104) and the maximum number of iterations $k_{\max}$ (10000 and 20000).
+
+We use a parallel hybrid implementation where the computation of the misfit function values is distributed to the MPI processes and the computation of the traveltime grids for each shot is scattered over the threads with OpenMP. Our implementation requires the population size to be a multiple of the number of available cores for maximum efficiency to avoid idle cores. The inversions are performed using 520 cores (26 Symmetric Multi-Processor machines with two sockets made of 2 Intel Xeon CPU E5-2640, 10 cores @ 2.40 GHz each).
+
+For each EA, we conduct three different experiments consisting of 50 independent runs with different population sizes and maximum numbers of iterations. The parameters and the computation times per run for all the experiments on the supercomputer are reported in Table \@ref(tab:ch4-computation-time). The first experiment principally aims to determine which algorithm is the most robust with smaller population. For the second and third experiments, we fix the number of forward modelings per run to determine whether it is better to have a larger population or to perform more iterations given the same computation time. Indeed, the computation time is the main limiting factor when dealing with real-world problems and is directly proportional to the population size and the maximum number of iterations. For all the experiments, the population is initialized using increasing gradient velocity models as previously described in Table \@ref(tab:ch4-model-initialization).
+
+(ref:ch4-computation-time-cap) Parameters and computation times per run (in hours). MPI and OMP respectively indicate the number of processes and threads used for each experiment.
+
+```{r ch4-computation-time, eval = TRUE}
+library(kableExtra)
+
+solvers = c("Population size",
+            "Number of iterations",
+            "MPI / OMP",
+            "DE",
+            "CPSO",
+            "CMA-ES")
+
+exp1 = c("26",
+         "10000",
+         "26 / 20",
+         "0.21",
+         "0.20",
+         "0.38")
+
+exp2 = c("52",
+         "20000",
+         "52 / 10",
+         "0.75",
+         "0.74",
+         "1.27")
+
+exp3 = c("104",
+         "10000",
+         "104 / 5",
+         "0.75",
+         "0.74",
+         "1.26")
+
+dt = data.frame(" " = solvers,
+                "Experiment 1" = exp1,
+                "Experiment 2" = exp2,
+                "Experiment 3" = exp3,
+                check.names = FALSE)
+
+knitr::kable(dt,
+             caption = '(ref:ch4-computation-time-cap)',
+             align = c("l", "c", "c", "c"),
+             linesep = "",
+             format = format,
+             booktabs = TRUE,
+             escape = FALSE) %>%
+kable_styling(full_width = FALSE) %>%
+group_rows("Parameter", 1, 3) %>%
+group_rows("Computation time", 4, 6)
+```
+
+Figure \@ref(fig:ch4-inverted-rms) displays the average evolution of the RMS and its standard deviation with respect to the iteration number for the 50 independent runs. The RMS standard deviation corresponds to the repeatability of an algorithm and illustrates how the initial populations affect the final solutions. Generally, increasing the population size improves the repeatability of the algorithms (lower RMS deviation). Increasing the population size from 26 to 52 noticeably improves their speeds of convergence. However, increasing the population size from 52 to 104 does not improve much their convergence behaviors. On the other hand, more iterations allow the algorithm to slowly refine the solutions. Indeed, CPSO and CMA-ES were able to reach misfits comparable to the ones obtained with a smaller population but with twice more iterations. These results shows that larger population improves the speed of convergence but is not necessarily required when considering the computation time. Indeed, performing more iterations can also improve the convergence of the algorithms. Nonetheless, experiment 2 for CPSO produces worse solutions in terms of repeatability than in experiment 3.
+
+(ref:ch4-inverted-rms-cap) Evolution of average RMS (left) and RMS deviation (right) with respect to iteration number for the 3 experiments with the 3 EA.
+
+```{r ch4-inverted-rms, fig.cap = '(ref:ch4-inverted-rms-cap)'}
+knitr::include_graphics("figures/chapter4/inverted_rms.png")
+```
+
+From an optimization point of view, CMA-ES clearly outperforms both DE and CPSO for its robustness and speed of convergence as it is able to reach lower RMS even with a smaller population size of 26. In the following, we only discuss the results for experiment 3 but similar conclusions can be drawn with the other experiments. Figures \@ref(fig:ch4-inverted-vz-profiles) and \@ref(fig:ch4-inverted-vx-profiles) respectively display the vertical and horizontal velocity profiles of the target, the mean and best models at different locations and depths. For each EA, the best velocity models are of higher frequency yet none of them, even for CMA-ES, match the target velocity model in depth (below 1000 m). All the best velocity models are probably trapped in a local minimum due to the non-linearity and high dimensionality of the problem. On the other hand, despite their lower resolutions, the mean velocity models obtained by the three EA fit the long wavelengths of the target velocity model at all depths. This can be explained by the beneficial effect of sampling and averaging many models in the ensemble similarly to MCMC based methods (@Bodin2009).
+
+(ref:ch4-inverted-vz-profiles-cap) Comparison of vertical profiles between the target (black), the mean (blue) and the best (green) velocity models at different locations for the 3 EA. The errors are indicated in gray shade.
+
+```{r ch4-inverted-vz-profiles, fig.cap = '(ref:ch4-inverted-vz-profiles-cap)'}
+knitr::include_graphics("figures/chapter4/inverted_vertical_profiles.png")
+```
+
+(ref:ch4-inverted-vx-profiles-cap) Comparison of horizontal profiles between the target (black), the mean (blue) and the best (green) velocity models at different depths for the 3 EA. The errors are indicated in gray shade.
+
+```{r ch4-inverted-vx-profiles, fig.cap = '(ref:ch4-inverted-vx-profiles-cap)'}
+knitr::include_graphics("figures/chapter4/inverted_horizontal_profiles.png")
+```
+
+We also display in Figures \@ref(fig:ch4-inverted-vz-profiles-diff) and \@ref(fig:ch4-inverted-vx-profiles-diff) the cross-sections of the differences between the target velocity model and the mean velocity models for each method. CMA-ES exhibits worse results compared to DE and CPSO with higher absolute errors in both the vertical and horizontal cross-sections. CPSO seems to perform slightly better than DE since the average errors are closer to zero. More generally, the model fit for the three algorithms deteriorates with increasing depth which is consistent with the acquisition geometry on surface.
+
+(ref:ch4-inverted-vz-profiles-diff-cap) Vertical cross-sections of the difference between the target and mean velocity models.
+
+```{r ch4-inverted-vz-profiles-diff, fig.cap = '(ref:ch4-inverted-vz-profiles-diff-cap)'}
+knitr::include_graphics("figures/chapter4/inverted_vertical_profiles_diff.png")
+```
+
+(ref:ch4-inverted-vx-profiles-diff-cap) Horizontal cross-sections of the difference between the target and mean velocity models.
+
+```{r ch4-inverted-vx-profiles-diff, fig.cap = '(ref:ch4-inverted-vx-profiles-diff-cap)'}
+knitr::include_graphics("figures/chapter4/inverted_horizontal_profiles_diff.png")
+```
+
+We show in Figure \@ref(fig:ch4-inverted-models) the mean velocity models for experiment 3 and the associated uncertainties. To quality control the results, we represent the target velocity model at the uppermost and superimpose over the results the ray coverage of the target velocity model. All the mean velocity models are fairly consistent with the target structure, except for DE that underestimates the velocity below 2.5 km depth. Nonetheless, when considering the associated relative standard deviations, only CPSO is in agreement with the target ray coverage. Indeed, high uncertainties are retrieved in areas that are not illuminated by the rays, while both DE and CMA-ES produce low uncertainties in these areas. Such a discrepancy is due to the better repeatability of DE and CMA-ES compared to CPSO. Indeed, great repeatability means that each independent run has produced a final model with comparable misfit value. The lower repeatability obtained by CPSO indicates that it also samples models of lower misfit values similarly to MCMC based methods. Therefore, despite being less repeatable, CPSO can be used to approximate the posterior density distribution, and thus is more reliable to quantify uncertainties compared to the other algorithms.
+
+(ref:ch4-inverted-models-cap) Inversion results for experiment 3. Weighted mean velocity models and associated uncertainties for (top) DE, (middle) CPSO and (bottom) CMA-ES. To facilitate the comparison, the target velocity model is represented at the uppermost (left) and the ray coverage is superimposed over the results (right).
+
+```{r ch4-inverted-models, fig.cap = '(ref:ch4-inverted-models-cap)'}
+knitr::include_graphics("figures/chapter4/inverted_models.png")
+```
+
+
+### Scalability {#ch4-scalability}
+
+EA are intrinsically parallel as they can simultaneously evaluate the quality of the models in a population. However, their parallel performances are mainly limited by the fraction of computational load that is not parallel (@Amdahl1967). In our implementation, data management, generation of new populations and internal variable initializations and updates are all performed sequentially, only the evaluations of the models (i.e. computations of the misfit function values) are parallelized.
+
+We evaluate the scalability of each algorithm on three refraction tomography problems of different dimensionality with various B-spline grids, namely a 10 by 15 grid ($d = 150$), a 15 by 20 grid ($d = 300$) and a 20 by 30 grid ($d = 600$). The population size is fixed to 104. As the algorithms are mainly CPU-bounded, we perform a strong scale analysis and measure the sequential and parallel computation time using one core only. We evaluate the parallel performance of each optimizer by calculating the theoretical speed up and parallel efficiency that can be achieved by the algorithms. The theoretical speed up $S$ can be described by Amdahl's law stating that the computation can be decomposed into sequential and parallel tasks and the speed up is only limited by the time required by the sequential part, following
+
+\begin{equation}
+  S \left( p, N \right) \le \frac{1}{1 - p + \frac{p}{N}}
+  (\#eq:ch4-speedup)
+\end{equation}
+
+where $p$ denotes the parallel fraction of the computation and $N$ the number of cores working in parallel. The theoretical parallel efficiency is the ratio of the theoretical speed up to the number of cores. An algorithm is considered to be embarassingly parallel if the speed up equals the number of cores and the parallel efficiency is 1. The results of the scalability analysis are shown in Figure \@ref(fig:ch4-scalability).
+
+(ref:ch4-scalability-cap) Maximum parallel performances of DE, CPSO and CMA-ES on a refraction tomography problem with a population size of 104. (Left) Speed up. (Right) Parallel efficiency.
+
+```{r ch4-scalability, fig.cap = '(ref:ch4-scalability-cap)'}
+knitr::include_graphics("figures/chapter4/scalability.png")
+```
+
+The theoretical speed up and parallel efficiency that can be achieved by DE and CPSO are almost ideal. However, parallel performance of CMA-ES strongly degrades with increasing processing power and dimensionality. This discrepancy is tied up with the fact that both CPSO and DE have an internal time complexity on the order of $\mathcal{O} \left( n d \right)$, while CMA-ES has a time complexity on the order of $\mathcal{O} \left( nd^3 \right)$ due to the eigenvalue decomposition of the covariance matrix. While DE and CPSO seem to have an ideal scalability, in practice, this is not true as good scalability is harder to achieve with increasing number of cores due to the communication overhead and/or overhead implied by the parallel decomposition of the algorithms that are not accounted for in Amdahl's law.
+
+
+## Discussion and conclusion {#ch4-discussion-and-conclusion}
+
+The main goal of this paper is to study the feasibility of EA to solve the highly non-linear and multi-modal refraction tomography problem in high dimensions. With the rise in computational power, it is important to implement algorithms that are able to handle efficiently all the available CPU resources. The methodology presented is promising in terms of computational cost as EA are intrinsically parallel and are well adapted to supercomputers. We applied and compared three EA to solve the refraction tomography problem, namely the Differential Evolution (DE), the Competitive Particle Swarm Optimization (CPSO), and the Covariance Matrix Adaptation - Evolution Strategy (CMA-ES).
+
+While global optimization methods should ideally be insensitive to the initial models, we showed that using realistic models (i.e. random increasing gradient) as initial population helps the EA to start the search in a space of lower misfit which significantly improves the convergence of EA. The main advantage of using EA for refraction tomography lies in the fact that this initialization procedure does not require the user to explicitly specify a good starting model and works well even with uninformative but realistic feasible space boundaries. In our paper, we set the lower and upper boundaries to 1500 and 5000 m/s, respectively.
+
+From a pure optimization point of view, CMA-ES clearly outperforms both DE and CPSO, being more robust in terms of repeatability and able to reach lower misfits even with a smaller population size. However, it comes at the cost of poor scalability with increasing dimensionality mainly due to the eigenvalue decomposition to adapt the covariance matrix. @Akimoto2014 proposed a modification of CMA-ES called VDCMA that uses a diagonal matrix $\mathbf{D}$ and a principal rotation vector $\mathbf{v}$ to parametrize the covariance matrix following
+
+\begin{equation}
+  \mathbf{C} = \mathbf{D} \left( \mathbf{I} + \mathbf{v} \mathbf{v}^\top \right) \mathbf{D}^\top
+  (\#eq:ch4-vdcma)
+\end{equation}
+
+\noindent where $\mathbf{I}$ is the identity matrix. Such parametrization reduces its internal time complexity from $\mathcal{O} \left( n d^3 \right)$ to $\mathcal{O} \left( n d \right)$ which should improve its scalability and feasibility for problems of larger dimension. On the other hand, DE and CPSO both exhibit good scalability but converge more slowly as larger population sizes and/or more iterations are required. Among the three methods tested, CPSO is the least repeatable algorithm.
+
+Because of the multi-modal nature of refraction tomography, although the three EA are able to converge toward models that explain the data, the final inverted models fit the target velocity model at shallow depths only. Nevertheless, as stochastic algorithms, each run of EA explores different subspaces of the model parameter space. Therefore, one can use different statistical estimates to reconstruct the velocity model and appraise uncertainties. We demonstrated that the weighted mean velocity model over all the models explored by every runs of an EA is able to approximate the long wavelengths of the target velocity model. However, only CPSO was able to produce uncertainties consistent with the target ray coverage. This can be explained by the lower repeatability of CPSO implying that it samples subspaces of lower likelihood as well, similarly to MCMC based methods.
+
+In this study, we investigated the influences of the population size and the maximum number of iterations. We tested different population sizes lower than the dimensionality ($n < d$). The *curse of dimensionality* implies an exponential growth of local optima. The different tests performed showed that increasing either the population size or the number of iterations both improve the convergence of the algorithms. Therefore, we would recommend to use larger populations instead of performing more iterations, especially since we can parallelize the individuals but not the iterations. However, although using a population larger than the number of dimensions ($n > d$) is common in problems of low dimensionality, we do not believe that increasing the population size to that extent would help EA to find the global minimum in acceptable time, but would rather deteriorate their performances (@Chen2015). In our experience, at least in solving tomographic problems, the population size should be set logarithmically with the dimensionality. Besides, more thorough analysis should be carried out on the different control parameters of EA. Indeed, we used the default parameter values that have been empirically tweaked in the literature with optimization in mind (i.e. good convergence and repeatability). For better estimates of uncertainty, these parameters should be tweaked to decrease the repeatability of the algorithms as we speculate that good repeatability is not beneficial for sampling. Nonetheless, in our case, default parameters for CPSO indeed perform well for sampling and uncertainty quantification.
+
+The methodology is not limited to refraction tomography only and can be easily applied to crosshole tomography or stereotomography with no modification. Extension to a 3D tomographic problem is also straightforward.
+
+
+## List of symbols
+
+(ref:ch4-list-symbols-cap) Symbol definitions.
+
+```{r ch4-list-symbols, eval = TRUE, cache = FALSE}
+library(kableExtra)
+
+symbols = c("$\\mathbf{m}$",
+            "$\\mathbf{m}_{\\min}, \\mathbf{m}_{\\max}$",
+            "$\\mathbf{d}^{obs}$",
+            "$\\mathbf{C_D}$",
+            "$g$",
+            "$E$",
+            "$n$",
+            "$d$",
+            "$k$, $k_{\\max}$",
+            "$\\mathbf{v}_{i}$",
+            "$\\mathbf{u}_{i}$",
+            "$\\mathbf{v}_{i}$",
+            "$\\mathbf{m}_{p,i}$",
+            "$\\mathbf{m}_{g}$",
+            "$\\mathbf{r}_{p}$, $\\mathbf{r}_{g}$",
+            "$\\delta$, $\\varepsilon$",
+            "$\\sigma$",
+            "$\\lambda$, $\\mu$",
+            "$\\sigma^k$",
+            "$\\bar{\\mathbf{m}}$, $\\mathbf{C}$",
+            "$c_1$, $c_\\mu$",
+            "$\\mathbf{p}_c$, $\\mathbf{p}_\\sigma$",
+            "$c_\\sigma$, $d_\\sigma$",
+            "$\\mathcal{U}$",
+            "$\\mathcal{N}$",
+            "$E \\left[ \\cdot \\right]$",
+            "$i$",
+            "$j$",
+            "$k$")
+
+definitions = c("Vector of model parameters",
+                "Vectors of model parameter space boundaries",
+                "Vector of observed data",
+                "Data covariance matrix",
+                "Forward operator linking model parameters to data",
+                "Misfit function",
+                "Population size",
+                "Dimensionality, number of parameters to optimize",
+                "Iteration number and maximum number of iterations",
+                "Vector of mutant model parameters",
+                "Vector of trial model parameters",
+                "Velocity vector",
+                "Vector of personal best parameters of model $i$",
+                "Vector of global best parameters of the population",
+                "Vectors of uniform random numbers",
+                "Swarm maximum radius and threshold",
+                "Proportion of models to reset",
+                "Numbers of offspring and parents",
+                "Step size at iteration $k$",
+                "Mean vector of and covariance matrix of multivariate gaussian distribution",
+                "Learning rates",
+                "Evolution paths",
+                "Horizon and damping parameters",
+                "Uniform distribution",
+                "Multivariate gaussian distribution",
+                "Expected value",
+                "Lower case subscript $i$ denotes the individual number",
+                "Lower case subscript $j$ denotes the parameter index",
+                "Lower case superscript $k$ denotes the iteration number")
+
+dt = data.frame(Symbol = symbols,
+                Definition = definitions,
+                check.names = FALSE)
+
+knitr::kable(dt,
+             caption = '(ref:ch4-list-symbols-cap)',
+             align = c("c", "l"),
+             linesep = "",
+             format = format,
+             booktabs = TRUE,
+             escape = FALSE) %>%
+kable_styling(full_width = FALSE) %>%
+group_rows("Inverse problem", 1, 9) %>%
+group_rows("DE", 10, 11) %>%
+group_rows("CPSO", 12, 17) %>%
+group_rows("CMA-ES", 18, 23) %>%
+group_rows("Mathematical notation", 24, 29)
+```

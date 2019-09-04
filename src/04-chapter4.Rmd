@@ -1,0 +1,10 @@
+`r if(knitr:::is_latex_output()) format = "latex" else format = "html"`
+
+
+```{r child = 'papers/gp2018a.Rmd', echo = FALSE}
+```
+
+
+## Acknowledgements {.unnumbered}
+
+The authors would like to thank Intel Corporation for computer resources, and the GEOTREF project for financial support (www.geotref.com). This project is funded by ADEME in the frame of les Investissements d'Avenir program. Partners of the GEOTREF project are Kidova, Teranov, MINES ParisTech, ENS Paris, GeoAzur, GeoRessources, IMFT, IPGS, LHyGes, UAG, and UCP-GEC.

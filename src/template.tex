@@ -1,0 +1,95 @@
+\documentclass[Journal, letterpaper]{ascelike}
+
+% New packages
+%==============================================================================
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath, amsfonts, amsthm, amssymb}
+\usepackage{lineno}
+\usepackage{hyperref}
+%==============================================================================
+
+% Packages required for BookDown
+%==============================================================================
+\usepackage{eso-pic}
+\usepackage{booktabs}
+\usepackage{latexsym}
+%\usepackage{lmodern}
+\usepackage{longtable}
+\usepackage{pdfpages}
+\usepackage{rotating}
+%\usepackage{sectsty}
+\usepackage{setspace}
+%\usepackage[table]{xcolor}
+\usepackage{tabu}
+%==============================================================================
+
+% Syntax highlighting
+%==============================================================================
+$if(highlighting-macros)$
+  $highlighting-macros$
+$endif$
+%==============================================================================
+
+% Title
+%==============================================================================
+\def\thetitle{$title$}
+%==============================================================================
+
+% Abstract
+%==============================================================================
+\def\theabstract{$abstract$}
+%==============================================================================
+
+% Keywords
+%==============================================================================
+\def\thekeywords{$keywords$}
+%==============================================================================
+
+% Authorship
+%==============================================================================
+\def\theauthorship{$authorship$}
+%==============================================================================
+
+% Title
+%==============================================================================
+\title{\thetitle}
+%==============================================================================
+
+% Authors
+%==============================================================================
+\author[1]{Keurfon~Luu\footnote{Corresponding author: keurfonluu@outlook.com}}
+\author[1]{Mark~Noble}
+\author[1]{Alexandrine~Gesret}
+\author[2]{Philippe~Thierry}
+
+\affil[1]{MINES~ParisTech,~PSL -- Research~University, Centre de G\'eosciences, 35, rue Saint-Honor\'e, 77305 Fontainebleau, France}
+\affil[2]{Intel Corporation, 2, rue de Paris, 92190 Meudon, France}
+
+\NameTag{Luu et al., \today}
+%==============================================================================
+
+\begin{document}
+
+
+\maketitle
+
+
+% Abstract and keywords
+%==============================================================================
+\begin{abstract}
+\theabstract
+
+\noindent \textbf{Keywords}: \thekeywords
+\end{abstract}
+%==============================================================================
+
+
+% Main content
+%==============================================================================
+\linenumbers		% Start lines numbering
+
+$body$
+%==============================================================================
+
+\end{document}
